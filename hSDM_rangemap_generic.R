@@ -204,9 +204,9 @@ points(sp_points, pch=16, col="black")
 sp_points <- crop(sp_points, ext)
 
 
-###--------------------------------------------------------------------------#
-### Snap the points to the closest pixel based on a distance threshold in km
-###--------------------------------------------------------------------------#
+###-------------------------------------------------------------------------------------#
+### Snap the points to the closest freshwater pixel based on a distance threshold in km
+###-------------------------------------------------------------------------------------#
 
 ### Make a separate directory for snapping the points
 dir.create(paste0(path,"/snap_points"))
@@ -217,7 +217,9 @@ if (!file.exists(paste0(path, "/snap_points/moveCoordinatesToClosestDataPixel103
 	               paste0(path, "/snap_points/moveCoordinatesToClosestDataPixel103.jar"), mode = "wb")
 }
 ### Citation: 
-### Verbruggen, H. (2012) RasterTools: moveCoordinatesToClosestDataPixel.jar version 1.03, available at http://www.phycoweb.net/software
+### Verbruggen, H. (2012) RasterTools: moveCoordinatesToClosestDataPixel.jar version 1.03, 
+### available at http://www.phycoweb.net/software
+
 ### Write the raster mask to disk (has to be an ASCII file)
 writeRaster(env_all_scaled[[1]], paste0(path, "/snap_points/raster_mask.asc"), NAflag=-9999, overwrite=TRUE)
 
@@ -227,23 +229,22 @@ names(sp_points_df) <- c("id", "longitude", "latitude")
 write.csv(sp_points_df, paste0(path, "/snap_points/points_for_snap.csv"), row.names=FALSE, quote=FALSE)
 
 
-### Run Java tool: You may need to set the "path" variable in the system settings, 
-### see https://www.java.com/en/download/help/path.xml
-
 
 ### Pass the path variable of the new folder to the operating system
 print(Sys.setenv(MYPATH = paste0(path, "/snap_points")))
 Sys.getenv("MYPATH")
 
+### Run Java tool: You may need to set the "path" variable in the system settings, 
+### see https://www.java.com/en/download/help/path.xml
 
 ### If using Linux/Unix (for Windows see below)
 if  (Sys.info()['sysname'] == "Linux") {
-system("java -version")
+system("java -version") # is Java installed?
 }
 
 ### Options of the snapping tool
 if  (Sys.info()['sysname'] == "Linux") {
-system("java -jar $MYPATH/moveCoordinatesToClosestDataPixel103.jar")
+system("java -jar $MYPATH/moveCoordinatesToClosestDataPixel103.jar") # see the options and flags
 }
 
 ### See options and flags
@@ -439,9 +440,9 @@ plot(sp_range, border="black", add=T)
 points(sp_points_snapped[c("longitude", "latitude")], pch=16, cex=0.8, col="black")
 
 
-###=================================================================================#
-###--- Run zero-inflated binomial model with a conditional autoregressive model ---- 
-###=================================================================================#
+###============================================================================================#
+###--- Run zero-inflated binomial model with an intrinsic conditional autoregressive model ---- 
+###============================================================================================#
 
 ### For demonstration purpose, run only one chain with 1000 iterations. If the species was 
 ### found at least once at a given site, the environment is considered suitable and any 
