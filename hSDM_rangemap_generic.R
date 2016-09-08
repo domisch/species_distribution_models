@@ -4,7 +4,7 @@
 ###--- Hierarchical Bayesian species distribution modeling using a rangemap as a covariate ----
 ###============================================================================================#
 
-### Sami Domisch, April 2016
+### Sami Domisch, September 2016
 
 ### This script includes: 
 
@@ -402,9 +402,9 @@ points(sp_points_snapped[c("longitude", "latitude")], pch=16, cex=0.8, col="blac
 ###--- Run zero-inflated binomial model with a conditional autoregressive model ---- 
 ###=================================================================================#
 
-### For demonstration purpose, run one chain with only 1000 iterations. If the species was 
+### For demonstration purpose, run only one chain with 1000 iterations. If the species was 
 ### found at least once at a given site, the environment is considered suitable and any 
-### non-detections at that site are due to imperfect detection.
+### non-detections at that site are potentially due to imperfect detection.
 
 ### Note that in this example the non-detections and trials are randomly generated; the 
 ### resulting models are therefore not useful for any ecological inference but for testing purpose only
@@ -458,15 +458,15 @@ pred_hbm_df$CI_97.5  <- apply(mod_hSDM_ZIB_iCAR$prob.p.pred, 2, quantile, 0.975)
 
 ### Create maps
 pred_hbm <- stack(
-rasterFromXYZ(pred_hbm_df[c(1:2,3)]), # x, y, mean suitability
-rasterFromXYZ(pred_hbm_df[c(1:2,4)]),
-rasterFromXYZ(pred_hbm_df[c(1:2,5)]),
-rasterFromXYZ(pred_hbm_df[c(1:2,6)])
+	rasterFromXYZ(pred_hbm_df[c(1:2,3)]), # x, y, mean suitability
+	rasterFromXYZ(pred_hbm_df[c(1:2,4)]),
+	rasterFromXYZ(pred_hbm_df[c(1:2,5)]),
+	rasterFromXYZ(pred_hbm_df[c(1:2,6)])
 )
 
 
-### Plot the predictions. Note the very high spatial random effects (scale truncated in the plot), 
-### potentially due to the stream network structure 
+### Plot the predictions. Note the very high spatial random effects (though the scale is truncated in the plot) 
+### are potentially due to the stream network structure 
 x11(8,10); par(mfrow=c(2,2))
 plot(aggregate(pred_hbm[[1]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="mean suitability")
 plot(sp_range, border="black", lwd=2, add=T)
