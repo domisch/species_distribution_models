@@ -34,11 +34,10 @@ browseURL("http://hsdm.sourceforge.net/")
 
 
 
-
 ###===========================#
 ### Set path and load packages
 ###===========================#
-path="C:/hSDM_rangemap"
+path="/home/hSDM_rangemap"
 dir.create(path)
 setwd(path)
 
@@ -65,9 +64,12 @@ if (!require("plyr")) { install.packages("plyr", dependencies = TRUE) ; library(
 
 ### For Windows, download the "ncdf4" library and install locally. 
 ### Here is an example for Windows 64-bit:
-download.file("http://cirrus.ucsd.edu/~pierce/ncdf/win64/ncdf4_1.12.zip", 
-               paste0(path, "/ncdf4_1.12.zip"))
-install.packages(paste0(path, "/ncdf4_1.12.zip"), repos=NULL) ; library(ncdf4)
+if(Sys.info()[["sysname"]]=="Windows") {
+	download.file("http://cirrus.ucsd.edu/~pierce/ncdf/win64/ncdf4_1.12.zip", 
+	               paste0(path, "/ncdf4_1.12.zip"))
+	install.packages(paste0(path, "/ncdf4_1.12.zip"), repos=NULL) ; library(ncdf4)
+}
+
 
 ### Set color scale for plotting
 col <- rev(rainbow(100, start = 0, end = 0.7)) 
@@ -86,9 +88,10 @@ sp_points$id <- seq(1:nrow(sp_points)) # add an ID to keep track of the coordina
 
 ### Download example rangemap of the species
 if (!file.exists(paste0(path, "/f_CMC01_1.zip"))){
-download.file("http://pisces.ucdavis.edu/files/uploads/layers/f_CMC01_1.zip", 
-               paste0(path, "/f_CMC01_1.zip"), mode = "wb")
+	download.file("https://pisces.ucdavis.edu/files/uploads/layers/f_CMC01_1.zip", 
+	               paste0(path, "/f_CMC01_1.zip"), mode = "wb")
 }
+
 ### Citation of this example data:
 browseURL("http://pisces.ucdavis.edu/content/mylopharodon-conocephalus")
 ###     Santos, Nicholas R., et al. "A programmable information system for management 
@@ -156,6 +159,8 @@ names(flow_acc) <- paste(c("flow"), c("length", "acc"), sep="_")
 lc_avg <- brick(paste0(path, "/landcover_average.nc"))
 names(lc_avg) <- paste(c("lc_avg"), sprintf("%02d", seq(1:12)), sep="_")
 
+### Stack all layer into one larger stack
+env_all=stack(dem, flow_acc, lc_avg)
 
 
 ### Crop the environmental layers (in parallel) to the extent of the buffered rangemap 
@@ -165,40 +170,33 @@ cl <- makePSOCKcluster(3)
 registerDoParallel(cl) # register parallel backend
 getDoParWorkers() # show number of workers
 
-### Crop and scale all layers in the brick
-dem_crop <- foreach(i=names(dem), r = unstack(dem),  .final=stack, .packages = c("raster", "ncdf4")) %dopar% {
-  options(rasterNCDF4 = TRUE)
-  tmp <- crop(r, ext, snap="in")
-  scale(tmp)
-  }
 
-lc_avg_crop <- foreach(i=names(lc_avg), r = unstack(lc_avg),  .final=stack, .packages = c("raster", "ncdf4")) %dopar% {
-  options(rasterNCDF4 = TRUE)
-  tmp <- crop(r, ext, snap="in")
-  scale(tmp)
-  }
-
-flow_acc_crop <- foreach(i=names(flow_acc), r = unstack(flow_acc),  .final=stack, .packages = c("raster", "ncdf4")) %dopar% {
+### Crop all layers to the esxtent of the study area, and scale all layers in the brick
+env_all_scaled <- foreach(i=names(env_all), r = unstack(env_all),  .final=stack, .packages = c("raster", "ncdf4")) %dopar% {
   options(rasterNCDF4 = TRUE)
   tmp <- crop(r, ext, snap="in")
   scale(tmp)
   }
 
 
-### Create a grid_id -layer, defines the spatial entity in the models
-grid_id <- raster(dem_crop[[1]])
+### Stop the cluster object
+stopCluster(cl)
+
+
+### Create a grid_id -layer that defines the spatial entity in the models
+grid_id <- raster(env_all_scaled[[1]])
 grid_id[] <- 1:ncell(grid_id)
-grid_id <- mask(grid_id, dem_crop[[1]])
+grid_id <- mask(grid_id, env_all_scaled[[1]])
 names(grid_id) <- "grid_id"
 
 
-### Stack the layers
-env <- stack(dem_crop, lc_avg_crop, flow_acc_crop, grid_id)
+### Add the grid ID layer to the stack
+env_all_scaled <- addLayer(env_all_scaled, grid_id)
 
 
 ### Plot the data
 x11(8,10)
-plot(env[[1]], col="grey")
+plot(env_all_scaled[[1]], col="grey")
 plot(sp_range, border="red", add=T)
 points(sp_points, pch=16, col="black")
 
@@ -210,28 +208,45 @@ sp_points <- crop(sp_points, ext)
 ### Snap the points to the closest pixel based on a distance threshold in km
 ###--------------------------------------------------------------------------#
 
+### Make a separate directory for snapping the points
+dir.create(paste0(path,"/snap_points"))
+
 ### Download the Java-Tool from phycoweb.net
-if (!file.exists(paste0(path, "/moveCoordinatesToClosestDataPixel103.jar"))){
-download.file("http://www.phycoweb.net/software/rasterGIS/moveCoordinatesToClosestDataPixel103.jar", 
-               paste0(path, "/moveCoordinatesToClosestDataPixel103.jar"), mode = "wb")
+if (!file.exists(paste0(path, "/snap_points/moveCoordinatesToClosestDataPixel103.jar"))){
+	download.file("http://www.phycoweb.net/software/rasterGIS/moveCoordinatesToClosestDataPixel103.jar", 
+	               paste0(path, "/snap_points/moveCoordinatesToClosestDataPixel103.jar"), mode = "wb")
 }
 ### Citation: 
 ### Verbruggen, H. (2012) RasterTools: moveCoordinatesToClosestDataPixel.jar version 1.03, available at http://www.phycoweb.net/software
 ### Write the raster mask to disk (has to be an ASCII file)
-writeRaster(lc_avg_crop[[1]], paste0(path, "/raster_mask.asc"), NAflag=-9999, overwrite=TRUE)
+writeRaster(env_all_scaled[[1]], paste0(path, "/snap_points/raster_mask.asc"), NAflag=-9999, overwrite=TRUE)
 
 ### Save the (raw) coordinates for snapping and write to disk
 sp_points_df <- as.data.frame(sp_points)[-1] # remove the first column (date)
 names(sp_points_df) <- c("id", "longitude", "latitude")
-write.csv(sp_points_df, paste0(path, "/points_for_snap.csv"), row.names=FALSE, quote=FALSE)
+write.csv(sp_points_df, paste0(path, "/snap_points/points_for_snap.csv"), row.names=FALSE, quote=FALSE)
 
 
 ### Run Java tool: You may need to set the "path" variable in the system settings, 
 ### see https://www.java.com/en/download/help/path.xml
 
-# system("cmd /c  java -version") # check if Java is installed.  
-# system("cmd /c  java -jar moveCoordinatesToClosestDataPixel103.jar") # see options and flags
 
+### Pass the path variable of the new folder to the operating system
+print(Sys.setenv(MYPATH = paste0(path, "/snap_points")))
+Sys.getenv("MYPATH")
+
+
+### If using Linux/Unix (for Windows see below)
+if  (Sys.info()['sysname'] == "Linux") {
+system("java -version")
+}
+
+### Options of the snapping tool
+if  (Sys.info()['sysname'] == "Linux") {
+system("java -jar $MYPATH/moveCoordinatesToClosestDataPixel103.jar")
+}
+
+### See options and flags
 #    -i   input coordinates file (csv)
 #    -r   raster used to determine which pixels have data (esri ascii format)
 #    -o   output coordinates file (csv)
@@ -239,12 +254,38 @@ write.csv(sp_points_df, paste0(path, "/points_for_snap.csv"), row.names=FALSE, q
 # optional parameters
 #    -md  maximum distance that new coordinates are allowed to be from original coordinates (in km)
 
+
 ###--- Snapping tolerance of 3 km ----
-system("cmd /c  java -jar C:/hSDM_rangemap/moveCoordinatesToClosestDataPixel103.jar  -i  C:/hSDM_rangemap/points_for_snap.csv   -r  C:/hSDM_rangemap/raster_mask.asc    -o  C:/hSDM_rangemap/points_snapped.csv  -md 3")
+if  (Sys.info()['sysname'] == "Linux") {
+   system("cd $MYPATH
+   java -jar  moveCoordinatesToClosestDataPixel103.jar  -i points_for_snap.csv  -r raster_mask.asc  -o points_snapped.csv -md 3")
+}
+
+
+
+
+###-------- If using Windows, use these lines: --------
+
+### Print path and see the options of the snapping tool
+if  (Sys.info()['sysname'] == "Windows") {
+  system("cmd /c  echo %MYPATH%") # se the path
+  system("java -jar $MYPATH/moveCoordinatesToClosestDataPixel103.jar") # is Java installed?
+  system("cmd /c java -jar  %MYPATH%/moveCoordinatesToClosestDataPixel103.jar") # see the options and flags
+}
+
+###--- Snapping tolerance of 3 km ----
+if  (Sys.info()['sysname'] == "Windows") {
+  system("cmd /c  java -jar  %MYPATH%/moveCoordinatesToClosestDataPixel103.jar  -i %MYPATH%/points_for_snap.csv  -r %MYPATH%/raster_mask.asc  -o %MYPATH%/points_snapped.csv  -md 3")
+}
+###---------------------------------------------------
+
+
+### Unset system variable
+Sys.unsetenv("MYPATH")
 
 
 ### Reload the snapped coordinate file. Those points that fell outside the pixels were removed. 
-sp_points_snapped <- read.csv(paste0(path, "/points_snapped.csv"), h=T)
+sp_points_snapped <- read.csv(paste0(path, "/snap_points/points_snapped.csv"), h=T)
 head(sp_points_snapped) # contains old and new coordinates
 ### Remove the old coordinate columns
 sp_points_snapped <- subset(sp_points_snapped, select=-c(old_longitude, old_latitude))
@@ -275,8 +316,8 @@ points(sp_points_removed, pch=16, cex=0.8, col='red') # points that were removed
 
 ### Rasterize the rangemap and mask the streams
 sp_range$range <- 1
-sp_range_r <- rasterize(sp_range, env[[1]], field="range", small=T, na.rm=T, background=0) # slow
-sp_range_r <- mask(sp_range_r, env[[1]]) # mask ocean and streams
+sp_range_r <- rasterize(sp_range, env_all_scaled[[1]], field="range", small=T, na.rm=T, background=0) # slow
+sp_range_r <- mask(sp_range_r, env_all_scaled[[1]]) # mask ocean and streams
 range_distance <- gridDistance(sp_range_r, origin=1, omit=NA) # get distance from rangemap boundary
 
 # ### Plot with the points
@@ -298,10 +339,10 @@ names(range_distance_linear) <- "range_distance"
 # writeRaster(range_distance_linear, paste0(path, "/range_distance_linear.tif"), overwrite=T)
 
 ### Scale the range_distance layer and add to the stack
-env <- addLayer(env, scale(range_distance_linear))
+env_all_scaled <- addLayer(env_all_scaled, scale(range_distance_linear))
 
 ### Plot (aggregate cells by factor 2 for better visualization)
-plot(aggregate(env[["range_distance"]], fact=2, fun=mean, na.rm=T), col=col, 
+plot(aggregate(env_all_scaled[["range_distance"]], fact=2, fun=mean, na.rm=T), col=col, 
      main="Linear within-stream distance \n from rangemap boundary (scaled)") # linear distance decay
 plot(sp_range, border="black", add=T)
 points(sp_points_snapped[c("longitude", "latitude")], pch=16, cex=0.8, col='black')
@@ -311,7 +352,7 @@ points(sp_points_snapped[c("longitude", "latitude")], pch=16, cex=0.8, col='blac
 ###--- Get the range-wide data for predicting the model across the study area ----
 ###===============================================================================#
 
-data <- as.data.frame(env, na.rm=T, xy=T)
+data <- as.data.frame(env_all_scaled, na.rm=T, xy=T)
 data$stream_id <- seq(1:nrow(data)) # add an id for the stream cells
 
 
@@ -320,7 +361,7 @@ data$stream_id <- seq(1:nrow(data)) # add an id for the stream cells
 ###=================================================#
 
 ### Get neighbors for each cell. Only for the study area (=connected streams marked by "range_distance")
-env_neigh <- as.data.frame(adjacent(env[["range_distance"]], cells=data$grid_id, 
+env_neigh <- as.data.frame(adjacent(env_all_scaled[["range_distance"]], cells=data$grid_id, 
                                     target=data$grid_id, 
                                     directions=8, sorted=T, pairs=T, id=T))
 
@@ -344,12 +385,12 @@ sum(n.neighbors) == length(neighbors)
 
 ### Get presences
 presence <- cbind.data.frame(sp_points_snapped[c("longitude", "latitude")], presence=1, 
-                             raster::extract(env, sp_points_snapped[c("longitude", "latitude")], sp=T, ID=F))
+                             raster::extract(env_all_scaled, sp_points_snapped[c("longitude", "latitude")], sp=T, ID=F))
 names(presence)[1:2] <- c("x", "y")
 ### "Non-detections" (random)
 ns <- 1000 
 set.seed(1234)
-sam <- as.data.frame(sampleRandom(env, ns, sp=T, ID=F))
+sam <- as.data.frame(sampleRandom(env_all_scaled, ns, sp=T, ID=F))
 absence <- cbind.data.frame(sam[c("x", "y")], presence=0, subset(sam, select=-c(x, y)))
 
 
@@ -367,7 +408,7 @@ data_fit <- merge(data_fit, data[c("grid_id", "stream_id")], by="grid_id")
 data_fit <- plyr::arrange(data_fit, stream_id)
 
 ### Plot all data
-plot(aggregate(env[["range_distance"]], fact=2, fun=mean, na.rm=T), 
+plot(aggregate(env_all_scaled[["range_distance"]], fact=2, fun=mean, na.rm=T), 
      main="black = presence \ngrey = non-detection (random)",
      xlab="Longitude", ylab="Latitude", col=col)
 points(absence[c("x", "y")], pch=16, cex=0.4, col='grey')
@@ -376,10 +417,9 @@ points(presence[c("x", "y")], pch=16, cex=0.8, col='black')
 
 
 
-
-###==================#
-###--- Run a GLM ----
-###==================#
+###================================#
+###--- Run a (non-spatial) GLM ----
+###================================#
 
 ### Use upstream elevation, flow accumulation, landcover (forest cover) and the rangemap as predictors
 model <- "~ dem_avg + dem_range + flow_acc + lc_avg_01 + lc_avg_04 + lc_avg_05 + range_distance"
@@ -388,7 +428,7 @@ beta_hat_glm <- coef(mod_glm) # get betas as starting values for hSDM later
 (as.data.frame(coef(mod_glm)))
 
 ### Predict model across the study area
-pred_glm <- predict(env, mod_glm, type="response")
+pred_glm <- predict(env_all_scaled, mod_glm, type="response")
 ### Write to disk
 writeRaster(pred_glm, paste0(path, "/pred_glm.tif"), overwrite=T)
 
@@ -397,6 +437,7 @@ plot(aggregate(pred_glm, fact=2, fun=mean, na.rm=T), zlim=c(0,1), col=col,
             main="Prediction GLM, aggregated x 2"); 
 plot(sp_range, border="black", add=T)
 points(sp_points_snapped[c("longitude", "latitude")], pch=16, cex=0.8, col="black")
+
 
 ###=================================================================================#
 ###--- Run zero-inflated binomial model with a conditional autoregressive model ---- 
@@ -468,18 +509,18 @@ pred_hbm <- stack(
 ### Plot the predictions. Note the very high spatial random effects (though the scale is truncated in the plot) 
 ### are potentially due to the stream network structure 
 x11(8,10); par(mfrow=c(2,2))
-plot(aggregate(pred_hbm[[1]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="mean suitability")
+plot(aggregate(pred_hbm[[1]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="Mean suitability")
 plot(sp_range, border="black", lwd=2, add=T)
 # points(sp_points_snapped[c("longitude", "latitude")], pch=16, cex=0.8, col="black")
-plot(aggregate(pred_hbm[[2]], fact=2, na.rm=T), col=col, zlim=c(-20,20), main="spatial random effects")
-plot(aggregate(pred_hbm[[3]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="lower credible interval")
-plot(aggregate(pred_hbm[[4]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="upper credible interval")
+plot(aggregate(pred_hbm[[2]], fact=2, na.rm=T), col=col, zlim=c(-20,20), main="Spatial random effects")
+plot(aggregate(pred_hbm[[3]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="Lower credible interval")
+plot(aggregate(pred_hbm[[4]], fact=2, na.rm=T), col=col, zlim=c(0,1), main="Upper credible interval")
 
 ### Estimated detection probability of the species
 parameter <- summary(mod_hSDM_ZIB_iCAR$mcmc)$statistics
 detection_prob <- parameter[,1]["gamma.(Intercept)"]
 inv_logit <- inv.logit(detection_prob)
-cat("Detection probability is", round(inv_logit,2))
+cat("Detection probability is", round(inv_logit,2), "\n")
 
 ### Write the 4 raster files to disk
 writeRaster(pred_hbm, paste0(path, "/hbm.tif"), overwrite=T, bylayer=T, suffix=names(pred_hbm))
